@@ -6,12 +6,12 @@
 
 ## 下载安装
 
-当前版本 **0.1.7（预览版）**。已验证环境：macOS arm64、DSH **0.2.2-rc.1**。其他系统和 DSH 版本尚未验收。
+当前版本 **0.1.11（预览版）**。已验证环境：macOS arm64、DSH **0.2.2-rc.1**。其他系统和 DSH 版本尚未验收。
 
 ### 方式一：安装预构建包（推荐）
 
 1. 安装并启动过 DeepSeek Harness，然后退出应用。
-2. 从 [v0.1.7 下载页](https://github.com/SushangLi/momoai_harness_plugin/releases/tag/v0.1.7) 下载 **`dsh-plugin-momoai-0.1.7.tgz`** 和 **`install.command`**，放在同一个文件夹。
+2. 从 [v0.1.11 下载页](https://github.com/SushangLi/momoai_harness_plugin/releases/tag/v0.1.11) 下载 **`dsh-plugin-momoai-0.1.11.tgz`** 和 **`install.command`**，放在同一个文件夹。
 3. 在终端进入该文件夹并运行安装脚本。例如都下载到了「下载」目录：
 
    ```sh
@@ -27,10 +27,10 @@
 
 ```sh
 "/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh" \
-  plugin --profile desktop add "$HOME/Downloads/dsh-plugin-momoai-0.1.7.tgz"
+  plugin --profile desktop add "$HOME/Downloads/dsh-plugin-momoai-0.1.11.tgz"
 ```
 
-安装包的 SHA-256 文件一并放在下载页，可在同一目录运行 `shasum -a 256 -c dsh-plugin-momoai-0.1.7.tgz.sha256` 校验。
+安装包的 SHA-256 文件一并放在下载页，可在同一目录运行 `shasum -a 256 -c dsh-plugin-momoai-0.1.11.tgz.sha256` 校验。
 
 ### 方式二：在桌面插件管理器导入本地目录
 
@@ -44,7 +44,7 @@
 ## 首次使用
 
 1. **注册账户**：点击侧栏「连接 MomoAI」，填写昵称，阅读并勾选用户协议，再点击「注册」。只有提交后才会开户；凭据由 DSH 宿主保存。
-2. **选择模型**：默认是 `momo_247`（DeepSeek-V4-Flash）。可搜索模型，调用类型默认自动适配。手动偏好不兼容时自动切换，切回兼容模型时恢复偏好。
+2. **选择模型**：默认是 `momo_247`（DeepSeek-V4-Flash）。模型框下可勾选「推荐 / 持有 / 全部」，默认显示推荐与持有模型的并集，支持搜索并记住筛选。推荐名单与平台同步，调用类型默认自动适配。手动偏好不兼容时自动切换，切回兼容模型时恢复偏好。
 3. **充值积分**：填写人民币金额，选择微信或支付宝，点击「立即充值」。微信在插件中展示二维码；支付宝打开官方收银台。付款由本人完成。
 4. **刷新积分**：付款后点击「刷新积分」或订单行的「刷新」。刷新后可在账户概览查看积分余额。
 5. **购买 Token**：在「按量购买 Token」填写数量，查看报价，核对目标模型、预计支出及最高授权支出后点击「确认购买」。**充值不会自动购买 Token**。

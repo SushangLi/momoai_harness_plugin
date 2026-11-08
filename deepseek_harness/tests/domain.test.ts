@@ -18,3 +18,16 @@ test('desktop PiAiAdapter resolves both protocols',async()=>{
 test('quantity quotes use only requested tokens and cap worst-case spending',()=>{const p=tokenPurchasePlan(1500,[{resell_price:2,token_onsale:500},{resell_price:1,token_onsale:1000}],10);assert.equal(p.tokens,1500);assert.equal(p.estimate,2);assert.equal(p.ceiling,6);assert.equal(p.max_price,2);assert.throws(()=>tokenPurchasePlan(1500,[{resell_price:2,unlimited:true}],2));const partial=tokenPurchasePlan(2000,[{resell_price:1,token_onsale:500}],10);assert.equal(partial.tokens,500);assert.equal(partial.requested,2000);});
 
 test('purchase ceiling covers per-seller rounding across fragmented fills',()=>{const listings=Array.from({length:1000},()=>({resell_price:0.5,token_onsale:10}));const p=tokenPurchasePlan(10000,listings,100);const actual=listings.reduce((n,r)=>n+Number((r.token_onsale*r.resell_price/1000).toFixed(2)),0);assert.ok(actual<=p.ceiling+1e-8);assert.equal(p.ceiling,10);});
+
+import {filterModels,defaultModelFilters} from '../src/domain.js';
+test('model ranges union recommendations and holdings; all and empty selections are explicit',()=>{
+ const models=[{id:1,name:'First',format:'openai' as const,recommended:true},{id:2,name:'Held',format:'openai' as const},{id:3,name:'Sale',format:'openai' as const},{id:4,name:'Zero',format:'openai' as const}];
+ const holdings=[{agent_id:'2',token_balance:1},{agent_id:3,token_balance:0,token_onsale:10},{agent_id:4,token_balance:0}];
+ assert.deepEqual(filterModels(models,defaultModelFilters,holdings).map(m=>m.id),[1,2,3]);
+ assert.deepEqual(filterModels(models,{recommended:false,held:true,all:false},holdings).map(m=>m.id),[2,3]);
+ assert.deepEqual(filterModels(models,{recommended:true,held:false,all:false},holdings).map(m=>m.id),[1]);
+ assert.equal(filterModels(models,{recommended:false,held:false,all:false},holdings).length,0);
+ assert.equal(filterModels(models,{recommended:false,held:false,all:true},holdings).length,4);
+ assert.deepEqual(filterModels(models,defaultModelFilters,holdings,'momo_2').map(m=>m.id),[2]);
+ assert.equal(filterModels(models,defaultModelFilters,holdings,'zero').length,0);
+});

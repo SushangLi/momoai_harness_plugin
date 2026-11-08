@@ -17,3 +17,25 @@ test('registration recovery reuses identity and never resets an existing key',as
 test('usage replay replaces slots, accounts retries and excludes inherited fork history',()=>{const log=[{seq:0,type:'request/context',data:{provider:'momoai',model:'momo_247'}},{seq:1,type:'assistant/attempt',data:{turn:0,step:0,stream:[{type:'chunk',time:0,chunk:{type:'usage',usage:{inputTokens:3,outputTokens:1}}}]}},{seq:2,type:'assistant/message',data:{turn:0,step:0,usage:{inputTokens:3,outputTokens:2}}},{seq:3,type:'llm/retry-started',data:{turn:0,step:0}},{seq:4,type:'assistant/attempt',data:{turn:0,step:0,stream:[]}}];const a=foldUsage({id:'s',log},'a');assert.equal(Object.keys(a).length,2);assert.equal(Object.values(a)[0].output,2);assert.equal(Object.values(a)[1].input,null);assert.deepEqual(foldUsage({id:'s',log},'a'),a);assert.equal(Object.keys(foldUsage({id:'fork',log,inheritedEventCount:5},'a')).length,0);});
 
 test('payment check compares persisted baseline even after focus refresh and restart',async()=>{const {core}=setup(()=>balance,{orders:[{...order,creditsBefore:100}]});await ready(core);await core.refreshBalance();const first:any=await core.execute({type:'paymentCheck',id:'order'});assert.equal(first.paymentCheck.change,200);const restored=setup(()=>balance,structuredClone(core.state));await ready(restored.core);const next:any=await restored.core.execute({type:'paymentCheck',id:'order'});assert.equal(next.paymentCheck.change,200);assert.equal(restored.core.state.orders[0].status,'awaiting-confirmation');const legacy=setup(()=>balance);await ready(legacy.core);assert.equal((await legacy.core.execute({type:'paymentCheck',id:'order'}) as any).paymentCheck.change,null);});
+
+test('filter changes persist without network; cached catalogue and balance coalesce automatic refreshes',async()=>{
+ let catalogCalls=0,balanceCalls=0;
+ const {core,saved}=setup(path=>{if(path.endsWith('balance')){balanceCalls++;return balance;}catalogCalls++;return {data:[],pagination:{totalPages:1}};});
+ await ready(core);
+ await core.execute({type:'modelFilters',filters:{recommended:false,held:true,all:false}});
+ assert.equal(catalogCalls+balanceCalls,0);
+ assert.deepEqual(saved.at(-1).modelFilters,{recommended:false,held:true,all:false});
+ await Promise.all([core.execute({type:'refresh'}),core.execute({type:'refresh'})]);
+ await core.execute({type:'refresh'});assert.equal(balanceCalls,1);assert.equal(catalogCalls,0);
+ await core.execute({type:'refresh',force:true});assert.equal(balanceCalls,2);assert.equal(catalogCalls,1);
+ await core.execute({type:'refresh'});assert.equal(catalogCalls,1,'empty catalogue is cached too');
+ const restored=setup(()=>{throw Error('unexpected network');},structuredClone(core.state));await restored.core.init();
+ await restored.core.catalog();assert.deepEqual(restored.core.view().modelFilters,{recommended:false,held:true,all:false});
+});
+test('balance cache expires and is isolated by account; forced financial reads remain fresh',async()=>{
+ let calls=0;const {core}=setup(()=>{calls++;return balance;});await ready(core);
+ await core.refreshBalance(false);await core.refreshBalance(false);assert.equal(calls,1);
+ (core as any).balanceAttemptAt=Date.now()-31000;await core.refreshBalance(false);assert.equal(calls,2);
+ await core.refreshBalance();assert.equal(calls,3);
+ core.account={username:'another',key:'new'};await core.refreshBalance(false);assert.equal(calls,4);
+});

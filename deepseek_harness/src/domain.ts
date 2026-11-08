@@ -1,8 +1,8 @@
 export type CallType = 'auto' | 'openai-completions' | 'anthropic-messages';
-export interface Model { id: number; name: string; format: 'openai'|'anthropic'|'google'; serviceStatus?:'active'; billingUnit?:'token'; }
+export interface Model { id: number; name: string; format: 'openai'|'anthropic'|'google'; serviceStatus?:'active'; billingUnit?:'token'; recommended?:boolean; }
 export function modelFrom(row: any): Model | null {
   if (!Number.isSafeInteger(Number(row.id)) || Number(row.id)<1 || row.agent_source_type!=='api' || !row.is_chat || row.is_delisted || row.service_status !== 'active' || row.billing_unit !== 'token' || !['openai','anthropic','google'].includes(row.baseurl_type)) return null;
-  return {id:Number(row.id),name:String(row.agent_name),format:row.baseurl_type,serviceStatus:'active',billingUnit:'token'};
+  return {id:Number(row.id),name:String(row.agent_name),format:row.baseurl_type,serviceStatus:'active',billingUnit:'token',recommended:row.recommended===true};
 }
 export function protocol(model: Model, preferred: CallType) {
   if (!['openai','anthropic','google'].includes(model.format)) throw Error('模型兼容信息缺失，无法调用');
@@ -21,7 +21,7 @@ export function purchasePlan(budget: number, listings: any[]) {
   return {tokens,max_price:price};
 }
 export interface Order {qrDataUrl?:string;id:string;account:string;agentId:number;amount:number;budget:number;used:number;tokens:number;status:'awaiting-confirmation'|'sending'|'uncertain'|'partial'|'complete';url:string;method:'wechat'|'alipay';}
-export type Command = ({type:'state'|'refresh'|'credentials'} | {type:'register';nickname:string;termsAccepted:boolean} | {type:'select';id:number;preferred?:CallType} | {type:'quote'|'recharge';amount:number;method:'wechat'|'alipay';agentId:number} | {type:'exchange';id:string} | {type:'paymentCheck';id:string} | {type:'purchaseQuote';agentId:number;tokens:number} | {type:'purchase';id:string}) & {sessionId?:string};
+export type Command = ({type:'state'|'credentials'} | {type:'refresh';force?:boolean} | {type:'modelFilters';filters:ModelFilters} | {type:'register';nickname:string;termsAccepted:boolean} | {type:'select';id:number;preferred?:CallType} | {type:'quote'|'recharge';amount:number;method:'wechat'|'alipay';agentId:number} | {type:'exchange';id:string} | {type:'paymentCheck';id:string} | {type:'purchaseQuote';agentId:number;tokens:number} | {type:'purchase';id:string}) & {sessionId?:string};
 
 export function tokenPurchasePlan(tokens:number,listings:any[],available:number){
  if(!Number.isSafeInteger(tokens)||tokens<1)throw Error('请输入大于零的整数 Token 数量');
@@ -36,4 +36,12 @@ export function tokenPurchasePlan(tokens:number,listings:any[],available:number)
  const ceiling=Math.ceil((offered*maxPrice/1000*2-1e-9)*100)/100;
  if(!Number.isFinite(available)||ceiling>available)throw Error(`积分不足，本次数量最多需要 ${ceiling} 积分`);
  return {tokens:offered,requested:tokens,max_price:maxPrice,estimate:Math.ceil((estimate-1e-9)*100)/100,ceiling};
+}
+
+export interface ModelFilters { recommended:boolean; held:boolean; all:boolean; }
+export const defaultModelFilters:ModelFilters={recommended:true,held:true,all:false};
+export function filterModels(models:Model[],filters:ModelFilters,tokens:any[]=[],search=''){
+ const held=new Set(tokens.filter(t=>Number(t.token_balance)>0||Number(t.token_onsale)>0).map(t=>Number(t.agent_id)));
+ const query=search.trim().toLowerCase();
+ return models.filter(m=>(filters.all||(filters.recommended&&m.recommended===true)||(filters.held&&held.has(m.id)))&&`${m.name} momo_${m.id} ${m.format}`.toLowerCase().includes(query));
 }

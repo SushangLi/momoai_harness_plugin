@@ -59,7 +59,7 @@ import { randomBytes } from "node:crypto";
 // src/domain.ts
 function modelFrom(row) {
   if (!Number.isSafeInteger(Number(row.id)) || Number(row.id) < 1 || row.agent_source_type !== "api" || !row.is_chat || row.is_delisted || row.service_status !== "active" || row.billing_unit !== "token" || !["openai", "anthropic", "google"].includes(row.baseurl_type)) return null;
-  return { id: Number(row.id), name: String(row.agent_name), format: row.baseurl_type, serviceStatus: "active", billingUnit: "token" };
+  return { id: Number(row.id), name: String(row.agent_name), format: row.baseurl_type, serviceStatus: "active", billingUnit: "token", recommended: row.recommended === true };
 }
 function protocol(model, preferred) {
   if (!["openai", "anthropic", "google"].includes(model.format)) throw Error("\u6A21\u578B\u517C\u5BB9\u4FE1\u606F\u7F3A\u5931\uFF0C\u65E0\u6CD5\u8C03\u7528");
@@ -86,6 +86,7 @@ function tokenPurchasePlan(tokens, listings, available) {
   if (!Number.isFinite(available) || ceiling > available) throw Error(`\u79EF\u5206\u4E0D\u8DB3\uFF0C\u672C\u6B21\u6570\u91CF\u6700\u591A\u9700\u8981 ${ceiling} \u79EF\u5206`);
   return { tokens: offered, requested: tokens, max_price: maxPrice, estimate: Math.ceil((estimate - 1e-9) * 100) / 100, ceiling };
 }
+var defaultModelFilters = { recommended: true, held: true, all: false };
 
 // src/core.ts
 var HttpFailure = class extends Error {
@@ -102,7 +103,7 @@ var MomoCore = class {
     this.fetcher = fetcher;
   }
   models = [];
-  state = { model: 247, preferred: "auto", orders: [], purchases: [], usage: {} };
+  state = { modelFilters: { ...defaultModelFilters }, model: 247, preferred: "auto", orders: [], purchases: [], usage: {} };
   account;
   balance = null;
   balanceAt = null;
@@ -110,12 +111,15 @@ var MomoCore = class {
   catalogAt = 0;
   catalogError = null;
   catalogFlight = null;
+  balanceFlight = null;
+  balanceAccount = null;
+  balanceAttemptAt = 0;
   busy = false;
   refreshFlight = null;
   async init() {
     this.state = { ...this.state, ...await this.load() };
-    this.models = this.state.catalogCache?.models || [];
-    this.catalogAt = this.state.catalogCache?.at || 0;
+    this.models = this.state.catalogCache?.version === 2 ? this.state.catalogCache.models : [];
+    this.catalogAt = this.state.catalogCache?.version === 2 ? this.state.catalogCache.at : 0;
     this.account = JSON.parse((await this.vault.resolve("MOMOAI_DSH_ACCOUNT"))?.value || "null");
     for (const o of [...this.state.orders, ...this.state.purchases]) if (o.status === "sending") o.status = "uncertain";
     await this.persist();
@@ -185,7 +189,7 @@ var MomoCore = class {
     await this.login();
   }
   async catalog(force = false) {
-    if (!force && this.models.length && Date.now() - this.catalogAt < 3e5) return;
+    if (!force && this.catalogAt > 0 && Date.now() - this.catalogAt < 3e5) return;
     if (this.catalogFlight) return this.catalogFlight;
     this.catalogFlight = (async () => {
       const path = (page) => `/api/agents?type=chat&zone=normal&page=${page}&limit=100`;
@@ -203,7 +207,7 @@ var MomoCore = class {
       this.models = [...new Map(data.map(modelFrom).filter(Boolean).map((m) => [m.id, m])).values()];
       this.catalogAt = Date.now();
       this.catalogError = null;
-      this.state.catalogCache = { at: this.catalogAt, models: this.models };
+      this.state.catalogCache = { version: 2, at: this.catalogAt, models: this.models };
       await this.persist();
     })().catch((e) => {
       this.catalogError = e.message;
@@ -213,17 +217,37 @@ var MomoCore = class {
     });
     return this.catalogFlight;
   }
-  async refreshBalance() {
-    try {
-      const r = await this.request("/api/cli/exchange/balance");
-      if (!r.data?.credits || !Array.isArray(r.data.tokens)) throw Error("\u4F59\u989D\u6570\u636E\u683C\u5F0F\u4E0D\u517C\u5BB9");
-      this.balance = r.data;
-      this.balanceAt = (/* @__PURE__ */ new Date()).toISOString();
+  async refreshBalance(force = true) {
+    const account = this.account?.username || null;
+    if (this.balanceAccount !== account) {
+      this.balance = null;
+      this.balanceAt = null;
       this.balanceError = null;
-    } catch (e) {
-      this.balanceError = "\u4F59\u989D\u6682\u65F6\u65E0\u6CD5\u5237\u65B0";
-      throw e;
+      this.balanceAttemptAt = 0;
+      this.balanceAccount = account;
     }
+    if (this.balanceFlight) {
+      await this.balanceFlight;
+      if (!force) return;
+    }
+    if (!force && Date.now() - this.balanceAttemptAt < 3e4) return;
+    this.balanceAttemptAt = Date.now();
+    this.balanceFlight = (async () => {
+      try {
+        const r = await this.request("/api/cli/exchange/balance");
+        if (!r.data?.credits || !Array.isArray(r.data.tokens)) throw Error("\u4F59\u989D\u6570\u636E\u683C\u5F0F\u4E0D\u517C\u5BB9");
+        if (this.account?.username !== account) return;
+        this.balance = r.data;
+        this.balanceAt = (/* @__PURE__ */ new Date()).toISOString();
+        this.balanceError = null;
+      } catch (e) {
+        this.balanceError = "\u4F59\u989D\u6682\u65F6\u65E0\u6CD5\u5237\u65B0";
+        throw e;
+      }
+    })().finally(() => {
+      this.balanceFlight = null;
+    });
+    return this.balanceFlight;
   }
   selected(id = this.state.model) {
     const m = this.models.find((x) => x.id === id);
@@ -231,15 +255,15 @@ var MomoCore = class {
     return m;
   }
   view() {
-    return { connected: !!this.account?.key, username: this.account?.displayName || this.account?.nickname, models: this.models, catalogError: this.catalogError, model: this.state.model, preferred: this.state.preferred, compat: this.models.some((x) => x.id === this.state.model) ? protocol(this.selected(), this.state.preferred) : null, balance: this.balance, balanceAt: this.balanceAt, balanceError: this.balanceError, orders: this.state.orders.filter((o) => o.account === this.account?.username), purchases: this.state.purchases.filter((p) => p.account === this.account?.username && p.status !== "quoted"), usage: Object.fromEntries(Object.entries(this.state.usage).filter(([, u]) => u.account === this.account?.username)) };
+    return { connected: !!this.account?.key, username: this.account?.displayName || this.account?.nickname, models: this.models, modelFilters: this.state.modelFilters, catalogError: this.catalogError, model: this.state.model, preferred: this.state.preferred, compat: this.models.some((x) => x.id === this.state.model) ? protocol(this.selected(), this.state.preferred) : null, balance: this.balance, balanceAt: this.balanceAt, balanceError: this.balanceError, orders: this.state.orders.filter((o) => o.account === this.account?.username), purchases: this.state.purchases.filter((p) => p.account === this.account?.username && p.status !== "quoted"), usage: Object.fromEntries(Object.entries(this.state.usage).filter(([, u]) => u.account === this.account?.username)) };
   }
   async execute(c) {
     if (c.type === "state") return this.view();
     if (c.type === "refresh") {
       if (this.busy) return this.view();
       if (!this.refreshFlight) this.refreshFlight = (async () => {
-        await this.catalog();
-        if (this.account?.key) await this.refreshBalance();
+        await this.catalog(c.force === true);
+        if (this.account?.key) await this.refreshBalance(c.force === true);
         return this.view();
       })().finally(() => {
         this.refreshFlight = null;
@@ -254,9 +278,10 @@ var MomoCore = class {
         await this.register(c.nickname, c.termsAccepted);
         await this.catalog();
         await this.refreshBalance();
-      } else if (c.type === "refresh") {
-        await this.catalog();
-        if (this.account?.key) await this.refreshBalance();
+      } else if (c.type === "modelFilters") {
+        if (!c.filters || ["recommended", "held", "all"].some((k) => typeof c.filters[k] !== "boolean")) throw Error("\u65E0\u6548\u6A21\u578B\u8303\u56F4");
+        this.state.modelFilters = { recommended: c.filters.recommended, held: c.filters.held, all: c.filters.all };
+        await this.persist();
       } else if (c.type === "credentials") return { ...this.account, authToken: void 0 };
       else if (c.type === "select") {
         await this.catalog();

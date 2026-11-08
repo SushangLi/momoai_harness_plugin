@@ -1,11 +1,11 @@
 import QRCode from 'qrcode';
 import {randomBytes} from 'node:crypto';
-import {modelFrom,protocol,purchasePlan,tokenPurchasePlan,type Model,type Order,type Command,type CallType} from './domain.js';
+import {defaultModelFilters,modelFrom,protocol,purchasePlan,tokenPurchasePlan,type Model,type Order,type Command,type CallType} from './domain.js';
 export class HttpFailure extends Error {constructor(readonly status:number){super(`MomoAI 请求失败（HTTP ${status}）`);}}
 export interface Vault {resolve(ref:string):Promise<{value:string}|undefined>;set(ref:string,value:string):Promise<void>;}
 export class MomoCore {
   models:Model[]=[];
-  state:any={model:247,preferred:'auto',orders:[],purchases:[],usage:{}};
+  state:any={modelFilters:{...defaultModelFilters},model:247,preferred:'auto',orders:[],purchases:[],usage:{}};
   account:any;
   balance:any=null;
   balanceAt:string|null=null;
@@ -13,10 +13,13 @@ export class MomoCore {
   catalogAt=0;
   catalogError:string|null=null;
   private catalogFlight:Promise<void>|null=null;
+  private balanceFlight:Promise<void>|null=null;
+  private balanceAccount:string|null=null;
+  private balanceAttemptAt=0;
   private busy=false;
   private refreshFlight:Promise<any>|null=null;
   constructor(private vault:Vault,private load:()=>Promise<any>,private save:(v:any)=>Promise<void>,private fetcher:typeof fetch=fetch){}
-  async init(){this.state={...this.state,...await this.load()}; this.models=this.state.catalogCache?.models||[];this.catalogAt=this.state.catalogCache?.at||0; this.account=JSON.parse((await this.vault.resolve('MOMOAI_DSH_ACCOUNT'))?.value||'null'); for(const o of [...this.state.orders,...this.state.purchases])if(o.status==='sending')o.status='uncertain';await this.persist();}
+  async init(){this.state={...this.state,...await this.load()}; this.models=this.state.catalogCache?.version===2?this.state.catalogCache.models:[];this.catalogAt=this.state.catalogCache?.version===2?this.state.catalogCache.at:0; this.account=JSON.parse((await this.vault.resolve('MOMOAI_DSH_ACCOUNT'))?.value||'null'); for(const o of [...this.state.orders,...this.state.purchases])if(o.status==='sending')o.status='uncertain';await this.persist();}
   async persist(){await this.save(this.state);}
   async request(path:string,body?:any,auth:'key'|'login'|'none'='key'){
     const token=auth==='key'?this.account?.key:auth==='login'?this.account?.authToken:undefined;
@@ -41,26 +44,34 @@ export class MomoCore {
     try{await this.request('/api/auth/register',{username:a.nickname,email:a.email,password:a.password},'none');}catch(e){if(e instanceof HttpFailure&&[400,422].includes(e.status)){a.registration='prepared';await this.storeAccount();}throw e;}await this.login();
   }
   async catalog(force=false){
-    if(!force&&this.models.length&&Date.now()-this.catalogAt<300000)return;
+    if(!force&&this.catalogAt>0&&Date.now()-this.catalogAt<300000)return;
     if(this.catalogFlight)return this.catalogFlight;
     this.catalogFlight=(async()=>{const path=(page:number)=>`/api/agents?type=chat&zone=normal&page=${page}&limit=100`;const first=await this.request(path(1),undefined,'none');
       const pages=Number(first.pagination?.totalPages||1);if(!Number.isSafeInteger(pages)||pages<1||pages>100||!Array.isArray(first.data))throw Error('模型目录格式不兼容');
       const data=[...first.data];for(let start=2;start<=pages;start+=4){const batch=await Promise.all(Array.from({length:Math.min(4,pages-start+1)},(_,i)=>this.request(path(start+i),undefined,'none')));for(const r of batch){if(!Array.isArray(r.data))throw Error('模型目录格式不兼容');data.push(...r.data);}}
-      this.models=[...new Map(data.map(modelFrom).filter(Boolean).map((m:any)=>[m.id,m])).values()] as Model[];this.catalogAt=Date.now();this.catalogError=null;this.state.catalogCache={at:this.catalogAt,models:this.models};await this.persist();
+      this.models=[...new Map(data.map(modelFrom).filter(Boolean).map((m:any)=>[m.id,m])).values()] as Model[];this.catalogAt=Date.now();this.catalogError=null;this.state.catalogCache={version:2,at:this.catalogAt,models:this.models};await this.persist();
     })().catch(e=>{this.catalogError=e.message;throw e;}).finally(()=>{this.catalogFlight=null;});return this.catalogFlight;
   }
 
-  async refreshBalance(){try{const r=await this.request('/api/cli/exchange/balance');if(!r.data?.credits||!Array.isArray(r.data.tokens))throw Error('余额数据格式不兼容');this.balance=r.data;this.balanceAt=new Date().toISOString();this.balanceError=null;}catch(e){this.balanceError='余额暂时无法刷新';throw e;}}
+  async refreshBalance(force=true){
+    const account=this.account?.username||null;
+    if(this.balanceAccount!==account){this.balance=null;this.balanceAt=null;this.balanceError=null;this.balanceAttemptAt=0;this.balanceAccount=account;}
+    if(this.balanceFlight){await this.balanceFlight;if(!force)return;}
+    if(!force&&Date.now()-this.balanceAttemptAt<30000)return;
+    this.balanceAttemptAt=Date.now();
+    this.balanceFlight=(async()=>{try{const r=await this.request('/api/cli/exchange/balance');if(!r.data?.credits||!Array.isArray(r.data.tokens))throw Error('余额数据格式不兼容');if(this.account?.username!==account)return;this.balance=r.data;this.balanceAt=new Date().toISOString();this.balanceError=null;}catch(e){this.balanceError='余额暂时无法刷新';throw e;}})().finally(()=>{this.balanceFlight=null;});
+    return this.balanceFlight;
+  }
   selected(id=this.state.model){const m=this.models.find(x=>x.id===id);if(!m)throw Error('模型不可用，请刷新目录并重新选择');return m;}
-  view(){return {connected:!!this.account?.key,username:this.account?.displayName||this.account?.nickname,models:this.models,catalogError:this.catalogError,model:this.state.model,preferred:this.state.preferred,compat:this.models.some(x=>x.id===this.state.model)?protocol(this.selected(),this.state.preferred):null,balance:this.balance,balanceAt:this.balanceAt,balanceError:this.balanceError,orders:this.state.orders.filter((o:Order)=>o.account===this.account?.username),purchases:this.state.purchases.filter((p:any)=>p.account===this.account?.username&&p.status!=='quoted'),usage:Object.fromEntries(Object.entries(this.state.usage).filter(([,u]:any)=>u.account===this.account?.username))};}
+  view(){return {connected:!!this.account?.key,username:this.account?.displayName||this.account?.nickname,models:this.models,modelFilters:this.state.modelFilters,catalogError:this.catalogError,model:this.state.model,preferred:this.state.preferred,compat:this.models.some(x=>x.id===this.state.model)?protocol(this.selected(),this.state.preferred):null,balance:this.balance,balanceAt:this.balanceAt,balanceError:this.balanceError,orders:this.state.orders.filter((o:Order)=>o.account===this.account?.username),purchases:this.state.purchases.filter((p:any)=>p.account===this.account?.username&&p.status!=='quoted'),usage:Object.fromEntries(Object.entries(this.state.usage).filter(([,u]:any)=>u.account===this.account?.username))};}
   async execute(c:Command){
     if(c.type==='state')return this.view();
-    if(c.type==='refresh'){if(this.busy)return this.view();if(!this.refreshFlight)this.refreshFlight=(async()=>{await this.catalog();if(this.account?.key)await this.refreshBalance();return this.view();})().finally(()=>{this.refreshFlight=null;});return this.refreshFlight;}
+    if(c.type==='refresh'){if(this.busy)return this.view();if(!this.refreshFlight)this.refreshFlight=(async()=>{await this.catalog(c.force===true);if(this.account?.key)await this.refreshBalance(c.force===true);return this.view();})().finally(()=>{this.refreshFlight=null;});return this.refreshFlight;}
     if(!c||typeof c!=='object')throw Error('无效操作');
     if(this.busy)throw Error('上一项操作尚未结束');this.busy=true;
     try{
       if(c.type==='register'){await this.register(c.nickname,c.termsAccepted);await this.catalog();await this.refreshBalance();}
-      else if(c.type==='refresh'){await this.catalog();if(this.account?.key)await this.refreshBalance();}
+      else if(c.type==='modelFilters'){if(!c.filters||['recommended','held','all'].some(k=>typeof c.filters[k]!=='boolean'))throw Error('无效模型范围');this.state.modelFilters={recommended:c.filters.recommended,held:c.filters.held,all:c.filters.all};await this.persist();}
       else if(c.type==='credentials')return {...this.account,authToken:undefined};
       else if(c.type==='select'){await this.catalog();this.selected(c.id);if(c.preferred)protocol(this.selected(c.id),c.preferred);this.state.model=c.id;if(c.preferred)this.state.preferred=c.preferred;await this.persist();}
       else if(c.type==='quote'){

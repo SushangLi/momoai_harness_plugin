@@ -6,7 +6,7 @@ if [ ! -x "$dsh_cli" ]; then
   printf '%s\n' '请先安装 DeepSeek Harness 桌面版 0.2.2-rc.1。' >&2
   exit 1
 fi
-bundle="$plugin_dir/dsh-plugin-momoai-0.1.7.tgz"
+bundle="$plugin_dir/dsh-plugin-momoai-0.1.11.tgz"
 if [ ! -f "$bundle" ]; then
   printf '%s\n' '缺少本地安装包，请先执行 npm ci、npm test、npm pack。' >&2
   exit 1
