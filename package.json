@@ -1,0 +1,59 @@
+{
+  "name": "dsh-plugin-momoai",
+  "version": "0.1.12",
+  "type": "module",
+  "private": true,
+  "description": "MomoAI account, models and token wallet for DeepSeek Harness desktop",
+  "main": "deepseek_harness/lib/index.js",
+  "exports": {
+    ".": "./deepseek_harness/lib/index.js",
+    "./client": "./deepseek_harness/lib/client.js",
+    "./typert": "./deepseek_harness/lib/typert.js",
+    "./remote-client": "./deepseek_harness/lib/typert.js"
+  },
+  "files": [
+    "deepseek_harness/lib/index.js",
+    "deepseek_harness/lib/client.js",
+    "deepseek_harness/lib/typert.js",
+    "deepseek_harness/cordis.patch.yml",
+    "deepseek_harness/README.md",
+    "README.md"
+  ],
+  "dsh": {
+    "bundle": {
+      "patch": "./deepseek_harness/cordis.patch.yml"
+    },
+    "client": {
+      "inject": [
+        "@deepseek-ai/dsh-client-ui-settings",
+        "@deepseek-ai/dsh-api-remotes"
+      ],
+      "platform": "web"
+    }
+  },
+  "peerDependencies": {
+    "@deepseek-ai/cordis": "~4.1.0",
+    "@deepseek-ai/dsh-llm": "0.2.2-rc.1",
+    "@deepseek-ai/dsh-llm-pi-ai": "0.2.2-rc.1",
+    "@deepseek-ai/dsh-typert-protocol": "0.2.2-rc.1",
+    "@deepseek-ai/schemastery": "~3.19.0",
+    "@earendil-works/pi-ai": "1.3.0",
+    "zod": "^4.4.3"
+  },
+  "dependencies": {
+    "qrcode": "^1.5.4",
+    "undici": "^8.12.2"
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "author": "SushangLi",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SushangLi/momoai_harness_plugin.git"
+  },
+  "homepage": "https://github.com/SushangLi/momoai_harness_plugin#readme",
+  "bugs": {
+    "url": "https://github.com/SushangLi/momoai_harness_plugin/issues"
+  }
+}

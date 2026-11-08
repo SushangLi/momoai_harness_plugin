@@ -2,42 +2,42 @@
 
 MomoAI 独立接入插件，支持账户注册、模型与协议选择、扫码充值、按量购买 Token、余额与用量展示。适用于 DSH 桌面版 **0.2.2-rc.1**。
 
-## 下载安装
+## 安装
 
-当前版本 **0.1.11（预览版）**。已验证环境：macOS arm64、DSH **0.2.2-rc.1**。其他系统和 DSH 版本尚未验收。
+适用于 **DSH 桌面版 0.2.2-rc.1**，已在 macOS arm64 验证。
 
-### 方式一：安装预构建包（推荐）
+1. 打开 DSH → **插件 → 添加插件**。
+2. 在「包名或地址」中粘贴：
 
-1. 安装并启动过 DeepSeek Harness，然后退出应用。
-2. 从 [v0.1.11 下载页](https://github.com/SushangLi/momoai_harness_plugin/releases/tag/v0.1.11) 下载 **`dsh-plugin-momoai-0.1.11.tgz`** 和 **`install.command`**，放在同一个文件夹。
-3. 在终端进入该文件夹并运行安装脚本。例如都下载到了「下载」目录：
-
-   ```sh
-   cd ~/Downloads
-   sh ./install.command
+   ```text
+   https://github.com/SushangLi/momoai_harness_plugin
    ```
 
-   脚本使用 DSH 自带的 CLI 安装到 `desktop` profile。无需编译，也无需另装 Node.js；首次安装需要联网下载依赖。
+3. 点击 **安装**，完成后按提示启用并重启 DSH。
 
-4. 重新打开 DSH。侧栏会出现 **MomoAI** 卡片；也可以在设置中打开 **「MomoAI 账户与余额」**。
+无需下载文件、运行脚本或手动编译。仓库入口随发布版本更新，以后分享同一地址即可。安装不会自动注册 MomoAI 账户。
 
-也可不使用脚本，直接运行以下命令（替换成实际下载路径）：
+<details>
+<summary>命令行与离线安装</summary>
+
+已安装 `dsh` 命令时：
+
+```sh
+dsh plugin --profile desktop add https://github.com/SushangLi/momoai_harness_plugin
+```
+
+macOS 桌面版也可以使用随附的 CLI：
 
 ```sh
 "/Applications/DeepSeek Harness.app/Contents/Resources/runtime/cli/bin/dsh" \
-  plugin --profile desktop add "$HOME/Downloads/dsh-plugin-momoai-0.1.11.tgz"
+  plugin --profile desktop add https://github.com/SushangLi/momoai_harness_plugin
 ```
 
-安装包的 SHA-256 文件一并放在下载页，可在同一目录运行 `shasum -a 256 -c dsh-plugin-momoai-0.1.11.tgz.sha256` 校验。
+离线包和安装脚本保留在 [Releases](https://github.com/SushangLi/momoai_harness_plugin/releases)。需要固定版本时，可下载对应 `.tgz`，在插件安装框填写其本地绝对路径。脚本方式则将 `.tgz` 与 `install.command` 放在同一目录，退出 DSH 后运行 `sh ./install.command`。
 
-### 方式二：在桌面插件管理器导入本地目录
+开发者也可导入本地 `deepseek_harness` 子目录。项目尚未发布到 npm。
 
-1. 克隆本仓库，或在 GitHub 点击 **Code → Download ZIP** 后解压。仓库已包含预构建的 `lib/` 文件。
-2. 打开 DSH 的 **插件 → 添加方式菜单 → 安装第三方插件 → 本地目录**。
-3. 选择仓库中的 **`deepseek_harness` 子目录**，不要选择仓库根目录。该子目录中应能看到 `package.json` 和 `cordis.patch.yml`。
-4. 安装后重启 DSH。如果桌面安装入口不可用，使用上面的 CLI 方式。
-
-本项目没有发布到 npm；不要使用 `npm install dsh-plugin-momoai`，也不要直接把此仓库根地址当作单个 DSH 插件导入。
+</details>
 
 ## 首次使用
 
@@ -53,7 +53,7 @@ MomoAI 独立接入插件，支持账户注册、模型与协议选择、扫码�
 
 ## 更新、禁用与卸载
 
-- 更新：退出 DSH，安装新版本 `.tgz`，再启动应用。已有账户和本地记录会保留。
+- 更新：按 DSH 的提示卸载后重新添加同一仓库地址，安装完成后重启。已有账户和本地记录会保留。
 - 禁用 / 卸载：在 DSH 插件管理器中操作。如果默认模型仍指向 MomoAI，请在原生模型设置中重新选择其他 provider。
 - 卸载不会删除 MomoAI 账户、DSH 中保存的凭据和本地交易记录；需要迁移时，先在「用量与账户 → 查看账户信息」保存登录信息。
 

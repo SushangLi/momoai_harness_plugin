@@ -1,7 +1,7 @@
 import {spawn} from 'node:child_process';
 import {resolve} from 'node:path';
 import {readFileSync,realpathSync,existsSync} from 'node:fs';
-const home=resolve('.acceptance/dsh-home');const profile=home+'/profiles/desktop';
+const home=resolve(process.env.DSH_VERIFY_HOME||'.acceptance/dsh-home');const profile=home+'/profiles/desktop';
 const pkg=profile+'/node_modules/dsh-plugin-momoai';
 if(!existsSync(pkg)||realpathSync(pkg)===process.cwd())throw Error('Install the tarball into the isolated .acceptance profile first');
 const root='/Applications/DeepSeek Harness.app/Contents/Resources';
