@@ -1,0 +1,12 @@
+import {spawn} from 'node:child_process';
+import {resolve} from 'node:path';
+import {readFileSync,realpathSync,existsSync} from 'node:fs';
+const home=resolve('.acceptance/dsh-home');const profile=home+'/profiles/desktop';
+const pkg=profile+'/node_modules/dsh-plugin-momoai';
+if(!existsSync(pkg)||realpathSync(pkg)===process.cwd())throw Error('Install the tarball into the isolated .acceptance profile first');
+const root='/Applications/DeepSeek Harness.app/Contents/Resources';
+const child=spawn('/Applications/DeepSeek Harness.app/Contents/MacOS/DeepSeek Harness',['--expose-internals',root+'/app.asar/dsh/node_modules/@deepseek-ai/dsh-desktop-host/lib/index.js',root+'/app.asar/dsh',profile,root+'/runtime/primary-runtime',root+'/runtime/primary-runtime/dependencies/pnpm/bin/pnpm.mjs',root+'/runtime/bin'],{env:{...process.env,ELECTRON_RUN_AS_NODE:'1',DSH_HOME:home},stdio:['ignore','pipe','pipe','ipc']});
+let ready=false,diagnostic='';const timer=setTimeout(()=>{child.kill('SIGTERM');console.error('Host startup timed out');process.exitCode=1;},60000);
+child.stdout.on('data',()=>{});child.stderr.on('data',b=>{diagnostic=(diagnostic+b.toString()).slice(-12000);});
+child.on('message',m=>{if(m.type==='ready'){ready=true;console.log('Isolated desktop Host READY: installed tarball, no source symlink');child.send({type:'shutdown'});}else if(m.type==='fatal'){console.error('Host startup failed:',m.message);process.exitCode=1;child.kill('SIGTERM');}});
+child.on('exit',code=>{clearTimeout(timer);if(!ready){console.error(diagnostic);process.exitCode=1;}else{const state=JSON.parse(readFileSync(home+'/momoai-plugin/state.json','utf8'));if(state.orders.length||existsSync(home+'/.credentials.yaml')&&readFileSync(home+'/.credentials.yaml','utf8').includes('MOMOAI_DSH_ACCOUNT')){console.error('Unexpected account side effect');process.exitCode=1;}console.log('Fresh install did not register an account; host exit:',code);}});

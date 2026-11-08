@@ -1,0 +1,9 @@
+node_modules/
+*.tgz
+.acceptance/
+
+lib/tests/
+*.tgz.sha256
+
+# Local research and acceptance records
+docs/
