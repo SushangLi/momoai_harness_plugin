@@ -88,13 +88,67 @@ function tokenPurchasePlan(tokens, listings, available) {
 }
 var defaultModelFilters = { recommended: true, held: true, all: false };
 
-// src/core.ts
-var HttpFailure = class extends Error {
-  constructor(status) {
-    super(`MomoAI \u8BF7\u6C42\u5931\u8D25\uFF08HTTP ${status}\uFF09`);
-    this.status = status;
+// src/http.ts
+function publicMessage(data) {
+  if (!data || typeof data !== "object") return;
+  const body = data;
+  const candidates = [body.message, typeof body.error === "string" ? body.error : body.error?.message];
+  for (const value of candidates) {
+    if (typeof value === "string" && value.trim()) return value.trim().slice(0, 500);
   }
+}
+var HttpFailure = class extends Error {
+  constructor(status, data) {
+    super(publicMessage(data) || `MomoAI \u8BF7\u6C42\u5931\u8D25\uFF08HTTP ${status}\uFF09`);
+    this.status = status;
+    this.name = "HttpFailure";
+    const code = data && typeof data === "object" ? data.code : void 0;
+    if (typeof code === "string") this.code = code;
+  }
+  code;
 };
+async function readJson(response) {
+  const data = await response.json().catch(() => null);
+  if (!response.ok || !data || data.success === false) throw new HttpFailure(response.status, data);
+  return data;
+}
+
+// src/identity.ts
+var platformOrigin = "https://momoai.pro";
+function identity(value) {
+  if (!value || !/^[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(value.userId) || typeof value.username !== "string" || typeof value.displayName !== "string") throw Error("\u8D26\u6237\u6570\u636E\u683C\u5F0F\u4E0D\u517C\u5BB9\uFF0C\u8BF7\u66F4\u65B0\u63D2\u4EF6");
+  return { userId: value.userId, username: value.username, displayName: value.displayName, email: value.email || null, emailVerified: value.emailVerified === true };
+}
+function apiKey(value) {
+  if (typeof value !== "string" || !/^momo_[A-Za-z0-9]{64}$/.test(value)) throw Error("\u8BF7\u586B\u5199\u6709\u6548\u7684 MomoAI API Key");
+  return value;
+}
+async function jsonRequest(fetcher, path, body, token) {
+  let response;
+  try {
+    response = await fetcher(platformOrigin + path, { method: body === void 0 ? "GET" : "POST", headers: { "Content-Type": "application/json", Origin: platformOrigin, ...token ? { Authorization: `Bearer ${token}` } : {} }, body: body === void 0 ? void 0 : JSON.stringify(body), redirect: "error", signal: AbortSignal.timeout(3e4) });
+  } catch {
+    throw Error("\u7F51\u7EDC\u8BF7\u6C42\u672A\u5B8C\u6210\uFF0C\u8BF7\u68C0\u67E5\u8FDE\u63A5\uFF1B\u8D2D\u4E70\u8BF7\u6C42\u4E0D\u4F1A\u81EA\u52A8\u91CD\u8BD5");
+  }
+  return { response, data: await readJson(response) };
+}
+async function passwordAccount(fetcher, identifier, password) {
+  if (!identifier || !["username", "email"].includes(identifier.type) || !identifier.value || !password) throw Error("\u8BF7\u9009\u62E9\u767B\u5F55\u65B9\u5F0F\u5E76\u586B\u5199\u8D26\u53F7\u3001\u5BC6\u7801");
+  const { response, data } = await jsonRequest(fetcher, "/api/auth/login", { identifier, password });
+  const cookies = response.headers.getSetCookie();
+  const session = cookies.map((v) => /^momo_session=(sid_[A-Za-z0-9_-]{43})(?:;|$)/.exec(v)?.[1]).find(Boolean);
+  if (!session) throw Error("\u767B\u5F55\u54CD\u5E94\u7F3A\u5C11\u4F1A\u8BDD\uFF0C\u8BF7\u66F4\u65B0\u63D2\u4EF6\u540E\u91CD\u8BD5");
+  try {
+    const user = identity(data.user);
+    const { data: result } = await jsonRequest(fetcher, "/api/user/momoai-key", { action: "create" }, session);
+    return { ...user, key: apiKey(result.data?.key), identityVersion: 2 };
+  } finally {
+    await jsonRequest(fetcher, "/api/auth/logout", {}, session).catch(() => {
+    });
+  }
+}
+
+// src/core.ts
 var MomoCore = class {
   constructor(vault, load, save, fetcher = fetch) {
     this.vault = vault;
@@ -127,66 +181,90 @@ var MomoCore = class {
   async persist() {
     await this.save(this.state);
   }
+  identityFlight = null;
   async request(path, body, auth = "key") {
-    const token = auth === "key" ? this.account?.key : auth === "login" ? this.account?.authToken : void 0;
+    const token = auth === "key" ? this.account?.key : void 0;
     if (auth !== "none" && !token) throw Error("\u8BF7\u5148\u8FDE\u63A5 MomoAI \u8D26\u6237");
-    let response;
-    try {
-      response = await this.fetcher("https://momoai.pro" + path, { method: body === void 0 ? "GET" : "POST", headers: { "Content-Type": "application/json", ...token ? { Authorization: `Bearer ${token}` } : {} }, body: body === void 0 ? void 0 : JSON.stringify(body), signal: AbortSignal.timeout(3e4) });
-    } catch {
-      throw Error("\u7F51\u7EDC\u8BF7\u6C42\u672A\u5B8C\u6210\uFF0C\u8BF7\u68C0\u67E5\u8FDE\u63A5\uFF1B\u8D2D\u4E70\u8BF7\u6C42\u4E0D\u4F1A\u81EA\u52A8\u91CD\u8BD5");
-    }
-    const data = await response.json().catch(() => null);
-    if (!response.ok || data?.success === false || !data) throw new HttpFailure(response.status);
-    return data;
+    return (await jsonRequest(this.fetcher, path, body, token)).data;
   }
   async storeAccount() {
     await this.vault.set("MOMOAI_DSH_ACCOUNT", JSON.stringify(this.account));
   }
-  async login() {
-    const a = this.account;
-    const r = await this.request("/api/auth/login", { email: a.email, password: a.password }, "none");
-    a.authToken = r.authToken;
-    a.displayName = r.user?.username || a.nickname;
-    a.userId = r.user?.user_id || a.userId;
-    a.key = r.user?.user_momoai_key || a.key;
-    if (!a.key) {
-      const k = await this.request("/api/user/momoai-key", { action: "create" }, "login");
-      a.key = k.data?.user_momoai_key;
+  migrateRecords(legacyLabel, userId) {
+    for (const row of [...this.state.orders, ...this.state.purchases, ...Object.values(this.state.usage)]) {
+      if (!row.userId && row.account === legacyLabel) {
+        row.userId = userId;
+        row.legacyAccount = row.account;
+        delete row.account;
+      }
     }
-    if (!a.key || !a.authToken) throw Error("\u8D26\u6237\u5C1A\u672A\u5C31\u7EEA\uFF0C\u8BF7\u91CD\u8BD5\u8FDE\u63A5");
+    this.state.sessionUserIds ??= {};
+    for (const [session, label] of Object.entries(this.state.sessionAccounts || {})) if (label === legacyLabel) this.state.sessionUserIds[session] = userId;
+    this.state.usage = Object.fromEntries(Object.entries(this.state.usage).map(([key, row]) => [row.userId === userId && key.startsWith(legacyLabel + ":") ? userId + key.slice(legacyLabel.length) : key, row]));
+    this.state.identityMigrations ??= [];
+    if (!this.state.identityMigrations.some((m) => m.legacyLabel === legacyLabel && m.userId === userId)) this.state.identityMigrations.push({ legacyLabel, userId, source: "verified-saved-credential", at: (/* @__PURE__ */ new Date()).toISOString() });
+  }
+  async saveConnected(account, provenLegacyLabel) {
+    if (provenLegacyLabel) this.migrateRecords(provenLegacyLabel, account.userId);
+    await this.persist();
+    this.account = { ...identity(account), key: apiKey(account.key), identityVersion: 2 };
     await this.storeAccount();
   }
-  async register(nickname, termsAccepted) {
-    nickname = typeof nickname === "string" ? nickname.trim() : "";
-    if (!nickname || nickname.length > 40 || termsAccepted !== true) throw Error("\u8BF7\u586B\u5199\u6635\u79F0\u5E76\u540C\u610F\u7528\u6237\u534F\u8BAE");
-    if (this.account?.key) {
-      await this.login();
-      return;
-    }
-    if (!this.account) {
-      const username = `momocli-${(/* @__PURE__ */ new Date()).toISOString().slice(0, 10).replaceAll("-", "")}-${randomBytes(5).toString("hex")}`;
-      this.account = { nickname, termsAcceptedAt: (/* @__PURE__ */ new Date()).toISOString(), username, email: `${username}@gmail.com`, password: randomBytes(18).toString("base64url"), registration: "prepared" };
-      await this.storeAccount();
-    }
-    const a = this.account;
-    if (a.registration !== "prepared") {
-      await this.login();
-      return;
-    }
-    a.nickname = nickname;
-    a.registration = "submitted";
-    await this.storeAccount();
-    try {
-      await this.request("/api/auth/register", { username: a.nickname, email: a.email, password: a.password }, "none");
-    } catch (e) {
-      if (e instanceof HttpFailure && [400, 422].includes(e.status)) {
-        a.registration = "prepared";
-        await this.storeAccount();
+  async ensureIdentity() {
+    if (this.identityFlight) return this.identityFlight;
+    if (!this.account?.key && !this.account?.password) return;
+    this.identityFlight = (async () => {
+      const previous = this.account;
+      if (previous.key) {
+        const result = await this.request("/api/cli/auth/me");
+        const user = identity(result.user);
+        if (previous.identityVersion === 2 && previous.userId !== user.userId) throw Error("\u8D26\u6237\u8EAB\u4EFD\u6821\u9A8C\u5931\u8D25\uFF0C\u8BF7\u91CD\u65B0\u8FDE\u63A5");
+        if (this.account !== previous) return;
+        await this.saveConnected({ ...user, key: previous.key }, previous.identityVersion === 2 ? void 0 : previous.username);
+      } else if (previous.email && previous.password) {
+        const account = await passwordAccount(this.fetcher, { type: "email", value: previous.email }, previous.password);
+        if (this.account !== previous) return;
+        await this.saveConnected(account, previous.username);
       }
+    })().finally(() => {
+      this.identityFlight = null;
+    });
+    return this.identityFlight;
+  }
+  async connect(identifier, password) {
+    if (this.identityFlight) await this.identityFlight.catch(() => {
+    });
+    const account = await passwordAccount(this.fetcher, identifier, password);
+    await this.saveConnected(account);
+    this.state.pendingRegistration = void 0;
+    await this.persist();
+  }
+  async connectKey(key) {
+    if (this.identityFlight) await this.identityFlight.catch(() => {
+    });
+    const { data } = await jsonRequest(this.fetcher, "/api/cli/auth/me", void 0, apiKey(key.trim()));
+    await this.saveConnected({ ...identity(data.user), key: key.trim() });
+  }
+  async register(nickname, email, password, termsAccepted) {
+    nickname = typeof nickname === "string" ? nickname.trim() : "";
+    email = typeof email === "string" ? email.trim() : "";
+    if (!nickname || nickname.length > 40 || termsAccepted !== true) throw Error("\u8BF7\u586B\u5199\u6635\u79F0\u5E76\u540C\u610F\u7528\u6237\u534F\u8BAE");
+    if (!email || !password) throw Error("\u8BF7\u586B\u5199\u771F\u5B9E\u90AE\u7BB1\u548C\u5BC6\u7801");
+    const pending = this.state.pendingRegistration;
+    if (pending && pending.email.toLowerCase() === email.toLowerCase() && pending.status !== "rejected") throw Error("\u8BE5\u6CE8\u518C\u5DF2\u63D0\u4EA4\uFF0C\u8BF7\u9A8C\u8BC1\u90AE\u7BB1\u540E\u767B\u5F55\uFF1B\u5982\u672A\u6536\u5230\u90AE\u4EF6\uFF0C\u53EF\u91CD\u65B0\u53D1\u9001\u9A8C\u8BC1\u90AE\u4EF6");
+    this.state.pendingRegistration = { email, displayName: nickname, status: "submitted", at: (/* @__PURE__ */ new Date()).toISOString() };
+    await this.persist();
+    try {
+      const result = await this.request("/api/auth/register", { displayName: nickname, email, password }, "none");
+      this.state.pendingRegistration.status = "verification";
+      this.state.pendingRegistration.message = result.message;
+      await this.persist();
+    } catch (e) {
+      if (e instanceof HttpFailure && [400, 409, 422].includes(e.status)) this.state.pendingRegistration.status = "rejected";
+      else this.state.pendingRegistration.status = "uncertain";
+      await this.persist();
       throw e;
     }
-    await this.login();
   }
   async catalog(force = false) {
     if (!force && this.catalogAt > 0 && Date.now() - this.catalogAt < 3e5) return;
@@ -218,7 +296,8 @@ var MomoCore = class {
     return this.catalogFlight;
   }
   async refreshBalance(force = true) {
-    const account = this.account?.username || null;
+    if (this.account?.identityVersion !== 2) await this.ensureIdentity();
+    const account = this.account?.userId || null;
     if (this.balanceAccount !== account) {
       this.balance = null;
       this.balanceAt = null;
@@ -235,8 +314,8 @@ var MomoCore = class {
     this.balanceFlight = (async () => {
       try {
         const r = await this.request("/api/cli/exchange/balance");
-        if (!r.data?.credits || !Array.isArray(r.data.tokens)) throw Error("\u4F59\u989D\u6570\u636E\u683C\u5F0F\u4E0D\u517C\u5BB9");
-        if (this.account?.username !== account) return;
+        if (r.data?.user_id !== account || !r.data?.credits || !Array.isArray(r.data.tokens)) throw Error("\u4F59\u989D\u6570\u636E\u683C\u5F0F\u4E0D\u517C\u5BB9");
+        if (this.account?.userId !== account) return;
         this.balance = r.data;
         this.balanceAt = (/* @__PURE__ */ new Date()).toISOString();
         this.balanceError = null;
@@ -255,7 +334,7 @@ var MomoCore = class {
     return m;
   }
   view() {
-    return { connected: !!this.account?.key, username: this.account?.displayName || this.account?.nickname, models: this.models, modelFilters: this.state.modelFilters, catalogError: this.catalogError, model: this.state.model, preferred: this.state.preferred, compat: this.models.some((x) => x.id === this.state.model) ? protocol(this.selected(), this.state.preferred) : null, balance: this.balance, balanceAt: this.balanceAt, balanceError: this.balanceError, orders: this.state.orders.filter((o) => o.account === this.account?.username), purchases: this.state.purchases.filter((p) => p.account === this.account?.username && p.status !== "quoted"), usage: Object.fromEntries(Object.entries(this.state.usage).filter(([, u]) => u.account === this.account?.username)) };
+    return { connected: !!this.account?.key && this.account?.identityVersion === 2, identityPending: !!this.account && this.account.identityVersion !== 2, displayName: this.account?.displayName, username: this.account?.username, userId: this.account?.userId, pendingRegistration: this.state.pendingRegistration, models: this.models, modelFilters: this.state.modelFilters, catalogError: this.catalogError, model: this.state.model, preferred: this.state.preferred, compat: this.models.some((x) => x.id === this.state.model) ? protocol(this.selected(), this.state.preferred) : null, balance: this.balance, balanceAt: this.balanceAt, balanceError: this.balanceError, orders: this.state.orders.filter((o) => !!this.account?.userId && o.userId === this.account.userId), purchases: this.state.purchases.filter((p) => !!this.account?.userId && p.userId === this.account.userId && p.status !== "quoted"), usage: Object.fromEntries(Object.entries(this.state.usage).filter(([, u]) => !!this.account?.userId && u.userId === this.account.userId)) };
   }
   async execute(c) {
     if (c.type === "state") return this.view();
@@ -263,7 +342,10 @@ var MomoCore = class {
       if (this.busy) return this.view();
       if (!this.refreshFlight) this.refreshFlight = (async () => {
         await this.catalog(c.force === true);
-        if (this.account?.key) await this.refreshBalance(c.force === true);
+        if (this.account) {
+          await this.ensureIdentity();
+          if (this.account?.identityVersion === 2) await this.refreshBalance(c.force === true);
+        }
         return this.view();
       })().finally(() => {
         this.refreshFlight = null;
@@ -274,16 +356,29 @@ var MomoCore = class {
     if (this.busy) throw Error("\u4E0A\u4E00\u9879\u64CD\u4F5C\u5C1A\u672A\u7ED3\u675F");
     this.busy = true;
     try {
+      if (["quote", "recharge", "paymentCheck", "purchaseQuote", "purchase"].includes(c.type) && this.account?.identityVersion !== 2) {
+        await this.ensureIdentity();
+        if (this.account?.identityVersion !== 2) throw Error("\u8BF7\u5148\u8FDE\u63A5 MomoAI \u8D26\u6237");
+      }
       if (c.type === "register") {
-        await this.register(c.nickname, c.termsAccepted);
+        await this.register(c.nickname, c.email, c.password, c.termsAccepted);
+      } else if (c.type === "connect" || c.type === "connectKey") {
+        if (c.type === "connect") await this.connect(c.identifier, c.password);
+        else await this.connectKey(c.key);
         await this.catalog();
         await this.refreshBalance();
+      } else if (c.type === "resendVerification") {
+        const r = await this.request("/api/auth/resend-verification", { email: c.email }, "none");
+        return { ...this.view(), notice: r.message };
       } else if (c.type === "modelFilters") {
         if (!c.filters || ["recommended", "held", "all"].some((k) => typeof c.filters[k] !== "boolean")) throw Error("\u65E0\u6548\u6A21\u578B\u8303\u56F4");
         this.state.modelFilters = { recommended: c.filters.recommended, held: c.filters.held, all: c.filters.all };
         await this.persist();
-      } else if (c.type === "credentials") return { ...this.account, authToken: void 0 };
-      else if (c.type === "select") {
+      } else if (c.type === "credentials") {
+        await this.ensureIdentity();
+        if (this.account?.identityVersion !== 2) throw Error("\u8BF7\u5148\u8FDE\u63A5\u8D26\u6237");
+        return { ...identity(this.account), key: this.account.key };
+      } else if (c.type === "select") {
         await this.catalog();
         this.selected(c.id);
         if (c.preferred) protocol(this.selected(c.id), c.preferred);
@@ -292,30 +387,28 @@ var MomoCore = class {
         await this.persist();
       } else if (c.type === "quote") {
         if (!Number.isFinite(c.amount) || c.amount < 1 || c.amount > 1e5 || !["wechat", "alipay"].includes(c.method)) throw Error("\u8BF7\u8F93\u5165\u6709\u6548\u91D1\u989D\u548C\u652F\u4ED8\u65B9\u5F0F");
-        await this.login();
-        const q = await this.request("/api/user/group-policy", { metric: "recharge_multiplier", scene: `recharge.${c.method}`, baseAmount: c.amount * 1e3 }, "login");
+        const q = await this.request("/api/user/group-policy", { metric: "recharge_multiplier", scene: `recharge.${c.method}`, baseAmount: c.amount * 1e3 });
         const budget = Number(q.quote?.adjustedAmount);
         if (!Number.isFinite(budget) || budget <= 0) throw Error("\u5145\u503C\u62A5\u4EF7\u683C\u5F0F\u4E0D\u517C\u5BB9");
         const estimate = null;
         return { ...this.view(), quote: { agentId: c.agentId, amount: c.amount, method: c.method, budget, estimate } };
       } else if (c.type === "recharge") {
         if (!["wechat", "alipay"].includes(c.method) || !Number.isFinite(c.amount) || c.amount < 1 || c.amount > 1e5 || Math.abs(Math.round(c.amount * 100) - c.amount * 100) > 1e-7) throw Error("\u5145\u503C\u91D1\u989D\u987B\u4E3A 1\u2013100000 \u5143\uFF0C\u6700\u591A\u4E24\u4F4D\u5C0F\u6570");
-        await this.login();
-        const q = await this.request("/api/user/group-policy", { metric: "recharge_multiplier", scene: `recharge.${c.method}`, baseAmount: c.amount * 1e3 }, "login");
+        const q = await this.request("/api/user/group-policy", { metric: "recharge_multiplier", scene: `recharge.${c.method}`, baseAmount: c.amount * 1e3 });
         const budget = Number(q.quote.adjustedAmount);
         if (!Number.isFinite(budget) || budget <= 0) throw Error("\u5145\u503C\u62A5\u4EF7\u683C\u5F0F\u4E0D\u517C\u5BB9");
         await this.refreshBalance();
         const creditsBefore = Number(this.balance.credits.spendable_total);
-        const r = await this.request(`/api/payment/${c.method}`, { amount: c.amount, description: "MomoAI DSH \u79EF\u5206\u5145\u503C" }, "login");
+        const r = await this.request(`/api/payment/${c.method}`, { amount: c.amount, description: "MomoAI DSH \u79EF\u5206\u5145\u503C" });
         if (r.orderSaved !== true || typeof r.orderNo !== "string" || !r.orderNo) throw Error("\u8BA2\u5355\u672A\u4FDD\u5B58\uFF0C\u8BF7\u52FF\u652F\u4ED8");
         const url = c.method === "wechat" ? r.qrCodeUrl : r.paymentUrl;
         const parsed = new URL(url);
         if (c.method === "wechat" ? parsed.protocol !== "weixin:" : parsed.protocol !== "https:" || !/(^|\.)alipay\.com$/.test(parsed.hostname)) throw Error("\u652F\u4ED8\u5730\u5740\u65E0\u6548");
         const qrDataUrl = c.method === "wechat" ? await QRCode.toDataURL(url, { width: 240, margin: 2 }) : void 0;
-        this.state.orders.push({ creditsBefore, qrDataUrl, id: r.orderNo, account: this.account.username, agentId: c.agentId, amount: c.amount, budget, used: 0, tokens: 0, status: "awaiting-confirmation", method: c.method, url });
+        this.state.orders.push({ creditsBefore, qrDataUrl, id: r.orderNo, userId: this.account.userId, agentId: c.agentId, amount: c.amount, budget, used: 0, tokens: 0, status: "awaiting-confirmation", method: c.method, url });
         await this.persist();
       } else if (c.type === "paymentCheck") {
-        const order = this.state.orders.find((o) => o.id === c.id && o.account === this.account?.username);
+        const order = this.state.orders.find((o) => o.id === c.id && !!this.account?.userId && o.userId === this.account.userId);
         if (!order) throw Error("\u8BA2\u5355\u4E0D\u5B58\u5728");
         const before = order.creditsBefore;
         await this.refreshBalance();
@@ -326,13 +419,13 @@ var MomoCore = class {
         await this.refreshBalance();
         const listings = await this.request(`/api/cli/exchange/listings?agent_id=${c.agentId}`);
         const plan = tokenPurchasePlan(c.tokens, listings.data.listings, Number(this.balance.credits.spendable_total));
-        const quote = { id: randomBytes(12).toString("hex"), account: this.account.username, agentId: c.agentId, modelName: this.selected(c.agentId).name, ...plan, createdAt: Date.now(), status: "quoted", actualTokens: 0, used: 0 };
+        const quote = { id: randomBytes(12).toString("hex"), userId: this.account.userId, agentId: c.agentId, modelName: this.selected(c.agentId).name, ...plan, createdAt: Date.now(), status: "quoted", actualTokens: 0, used: 0 };
         this.state.purchases = this.state.purchases.filter((p) => p.status !== "quoted" || p.createdAt > Date.now() - 6e4);
         this.state.purchases.push(quote);
         await this.persist();
         return { ...this.view(), purchaseQuote: quote };
       } else if (c.type === "purchase") {
-        const p = this.state.purchases.find((p2) => p2.id === c.id && p2.account === this.account?.username);
+        const p = this.state.purchases.find((p2) => p2.id === c.id && !!this.account?.userId && p2.userId === this.account.userId);
         if (!p || p.status !== "quoted") throw Error("\u8BE5\u8D2D\u4E70\u5DF2\u5904\u7406\u6216\u7ED3\u679C\u5F85\u6838\u5B9E\uFF0C\u8BF7\u52FF\u91CD\u590D\u63D0\u4EA4");
         if (Date.now() - p.createdAt > 6e4) throw Error("\u62A5\u4EF7\u5DF2\u8FC7\u671F\uFF0C\u8BF7\u91CD\u65B0\u83B7\u53D6\u62A5\u4EF7");
         await this.refreshBalance();
@@ -380,7 +473,7 @@ function momoTransport() {
 
 // src/usage.ts
 import { lastAssistantStreamChunk } from "@deepseek-ai/dsh-llm";
-function foldUsage(session, account) {
+function foldUsage(session, userId) {
   const rows = {};
   let route;
   const attempts = /* @__PURE__ */ new Map();
@@ -399,7 +492,7 @@ function foldUsage(session, account) {
     const source = e.data.message?.source || route;
     if (source?.provider !== "momoai") continue;
     const usage = e.data.usage || lastAssistantStreamChunk(e.data.stream || [], "usage")?.usage;
-    rows[`${account}:${slot}:${attempts.get(slot) || 0}`] = { account, sessionId: session.id, model: source.model, input: usage?.inputTokens ?? null, output: usage?.outputTokens ?? null, cacheRead: usage?.cacheReadTokens ?? null, cacheWrite: usage?.cacheWriteTokens ?? null };
+    rows[`${userId}:${slot}:${attempts.get(slot) || 0}`] = { userId, sessionId: session.id, model: source.model, input: usage?.inputTokens ?? null, output: usage?.outputTokens ?? null, cacheRead: usage?.cacheReadTokens ?? null, cacheWrite: usage?.cacheWriteTokens ?? null };
   }
   return rows;
 }
@@ -495,7 +588,7 @@ var MomoService = class extends (_a = TypertRemoteService, _execute_dec = [Remot
       this.core.state.sessionPreferences[c.sessionId] = c.preferred || this.core.state.sessionPreferences[c.sessionId] || this.core.state.preferred;
       await this.core.persist();
     }
-    if (c.type === "register" || c.type === "select") {
+    if ((c.type === "connect" || c.type === "connectKey" || c.type === "select") && result.connected) {
       const selection = { provider: "momoai", model: `momo_${this.core.state.model}` };
       const previous = this.ctx.agentDefaultModel.currentSelection();
       if (previous.provider !== "momoai") {
@@ -563,12 +656,15 @@ async function apply(ctx) {
   ctx.llm.registerAdapter(["momoai"], new MomoAdapter(core, transport.fetch));
   void core.catalog().catch(() => {
   });
-  if (core.account?.key) void core.refreshBalance().catch(() => {
+  if (core.account) void core.ensureIdentity().then(async () => {
+    await core.refreshBalance();
+    for (const session of ctx.sessions.list()) sync(session);
+  }).catch(() => {
   });
   ctx.effect(() => {
     const timer = setTimeout(() => {
       void (async () => {
-        if (core.account?.key && !core.state.defaultInstalled) {
+        if (core.account?.key && core.account.identityVersion === 2 && !core.state.defaultInstalled) {
           const previous = ctx.agentDefaultModel.currentSelection();
           if (previous.provider !== "momoai") core.state.previousDefault = previous;
           core.state.defaultInstalled = true;
@@ -580,13 +676,13 @@ async function apply(ctx) {
     return () => clearTimeout(timer);
   });
   const sync = (session) => {
-    if (!core.account?.key) return;
+    if (!core.account?.key || core.account.identityVersion !== 2) return;
     core.state.sessionPreferences ??= {};
     core.state.sessionPreferences[session.id] ??= core.state.preferred;
-    core.state.sessionAccounts ??= {};
-    const account = core.state.sessionAccounts[session.id] || core.account.username;
+    core.state.sessionUserIds ??= {};
+    const account = core.state.sessionUserIds[session.id] || core.account.userId;
     const rows = foldUsage(session, account);
-    core.state.sessionAccounts[session.id] = account;
+    core.state.sessionUserIds[session.id] = account;
     Object.assign(core.state.usage, rows);
     void core.persist().catch(() => ctx.logger.warn("MomoAI usage persistence failed"));
   };

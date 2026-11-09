@@ -1,6 +1,6 @@
 {
   "name": "dsh-plugin-momoai",
-  "version": "0.1.12",
+  "version": "0.1.13",
   "type": "module",
   "private": true,
   "description": "MomoAI account, models and token wallet for DeepSeek Harness desktop",

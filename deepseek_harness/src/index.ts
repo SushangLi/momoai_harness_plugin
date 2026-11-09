@@ -18,7 +18,7 @@ class MomoService extends TypertRemoteService {
    const c=JSON.parse(command);if(!c||typeof c!=='object')throw Error('无效操作');
    const result=await this.core.execute(c);
    if(c.type==='select'&&c.sessionId){this.core.state.sessionPreferences??={};this.core.state.sessionPreferences[c.sessionId]=c.preferred||this.core.state.sessionPreferences[c.sessionId]||this.core.state.preferred;await this.core.persist();}
-   if(c.type==='register'||c.type==='select'){
+   if((c.type==='connect'||c.type==='connectKey'||c.type==='select')&&result.connected){
      const selection={provider:'momoai',model:`momo_${this.core.state.model}`};
      const previous=this.ctx.agentDefaultModel.currentSelection();if(previous.provider!=='momoai'){this.core.state.previousDefault=previous;await this.core.persist();}
      await this.ctx.agentDefaultModel.saveSelection(selection);
@@ -36,17 +36,17 @@ export async function apply(ctx:any){
  const transport=momoTransport();ctx.effect(()=>()=>transport.close());
  const core=new MomoCore(ctx.credentials,load,save,transport.fetch);await core.init();new MomoService(ctx,core);
  ctx.llm.registerAdapter(['momoai'],new MomoAdapter(core,transport.fetch));
- void core.catalog().catch(()=>{});if(core.account?.key)void core.refreshBalance().catch(()=>{});
+ void core.catalog().catch(()=>{});if(core.account)void core.ensureIdentity().then(async()=>{await core.refreshBalance();for(const session of ctx.sessions.list())sync(session);}).catch(()=>{});
  // Config editing reconciles the loader: never await it inside plugin initialization.
- ctx.effect(()=>{const timer=setTimeout(()=>{void (async()=>{if(core.account?.key&&!core.state.defaultInstalled){const previous=ctx.agentDefaultModel.currentSelection();if(previous.provider!=='momoai')core.state.previousDefault=previous;core.state.defaultInstalled=true;await core.persist();await ctx.agentDefaultModel.saveSelection({provider:'momoai',model:`momo_${core.state.model}`});}})().catch(()=>ctx.logger.warn('MomoAI default model setup failed'));},0);return()=>clearTimeout(timer);});
+ ctx.effect(()=>{const timer=setTimeout(()=>{void (async()=>{if(core.account?.key&&core.account.identityVersion===2&&!core.state.defaultInstalled){const previous=ctx.agentDefaultModel.currentSelection();if(previous.provider!=='momoai')core.state.previousDefault=previous;core.state.defaultInstalled=true;await core.persist();await ctx.agentDefaultModel.saveSelection({provider:'momoai',model:`momo_${core.state.model}`});}})().catch(()=>ctx.logger.warn('MomoAI default model setup failed'));},0);return()=>clearTimeout(timer);});
 
  const sync=(session:any)=>{
-   if(!core.account?.key)return;
+   if(!core.account?.key||core.account.identityVersion!==2)return;
    core.state.sessionPreferences??={};core.state.sessionPreferences[session.id]??=core.state.preferred;
-   core.state.sessionAccounts??={};
-   const account=core.state.sessionAccounts[session.id]||core.account.username;
+   core.state.sessionUserIds??={};
+   const account=core.state.sessionUserIds[session.id]||core.account.userId;
    const rows=foldUsage(session,account);
-   core.state.sessionAccounts[session.id]=account;Object.assign(core.state.usage,rows);
+   core.state.sessionUserIds[session.id]=account;Object.assign(core.state.usage,rows);
    void core.persist().catch(()=>ctx.logger.warn('MomoAI usage persistence failed'));
  };
  for(const session of ctx.sessions.list())sync(session);

@@ -20,8 +20,8 @@ export function purchasePlan(budget: number, listings: any[]) {
   if (!Number.isSafeInteger(tokens)||tokens<1) throw Error('兑换额度不足以购买一个 Token');
   return {tokens,max_price:price};
 }
-export interface Order {qrDataUrl?:string;id:string;account:string;agentId:number;amount:number;budget:number;used:number;tokens:number;status:'awaiting-confirmation'|'sending'|'uncertain'|'partial'|'complete';url:string;method:'wechat'|'alipay';}
-export type Command = ({type:'state'|'credentials'} | {type:'refresh';force?:boolean} | {type:'modelFilters';filters:ModelFilters} | {type:'register';nickname:string;termsAccepted:boolean} | {type:'select';id:number;preferred?:CallType} | {type:'quote'|'recharge';amount:number;method:'wechat'|'alipay';agentId:number} | {type:'exchange';id:string} | {type:'paymentCheck';id:string} | {type:'purchaseQuote';agentId:number;tokens:number} | {type:'purchase';id:string}) & {sessionId?:string};
+export interface Order {qrDataUrl?:string;id:string;userId:string;agentId:number;amount:number;budget:number;used:number;tokens:number;status:'awaiting-confirmation'|'sending'|'uncertain'|'partial'|'complete';url:string;method:'wechat'|'alipay';}
+export type Command = ({type:'state'|'credentials'} | {type:'refresh';force?:boolean} | {type:'modelFilters';filters:ModelFilters} | {type:'register';nickname:string;email:string;password:string;termsAccepted:boolean} | {type:'connect';identifier:{type:'email'|'username';value:string};password:string} | {type:'connectKey';key:string} | {type:'resendVerification';email:string} | {type:'select';id:number;preferred?:CallType} | {type:'quote'|'recharge';amount:number;method:'wechat'|'alipay';agentId:number} | {type:'exchange';id:string} | {type:'paymentCheck';id:string} | {type:'purchaseQuote';agentId:number;tokens:number} | {type:'purchase';id:string}) & {sessionId?:string};
 
 export function tokenPurchasePlan(tokens:number,listings:any[],available:number){
  if(!Number.isSafeInteger(tokens)||tokens<1)throw Error('请输入大于零的整数 Token 数量');
