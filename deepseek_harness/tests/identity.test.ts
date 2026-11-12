@@ -10,16 +10,16 @@ function fixture(fetcher:typeof fetch,credential:any=null,state:any={}){
   const core=new MomoCore({resolve:async()=>credential?{value:JSON.stringify(credential)}:undefined,set:async(_,value)=>{credential=JSON.parse(value);}},async()=>state,async value=>{saves.push(structuredClone(value));},fetcher);
   return {core,saves,get credential(){return credential;}};
 }
-test('login uses explicit identifier and cookie session; key is preserved and password/session are never saved',async()=>{
+test('login uses automatic identifier and cookie session; key is preserved and password/session are never saved',async()=>{
   const paths:string[]=[];
   const f=fixture(async(url,init)=>{
     const path=new URL(String(url)).pathname;paths.push(path);
     assert.equal(init?.redirect,'error');assert.equal(new Headers(init?.headers).get('origin'),'https://momoai.pro');
-    if(path.endsWith('/login')){assert.deepEqual(JSON.parse(String(init?.body)),{identifier:{type:'username',value:'mail@shaped.name'},password:'private password'});return json({user},200,{'set-cookie':`momo_session=${session}; HttpOnly; Secure; Path=/`});}
+    if(path.endsWith('/login')){assert.deepEqual(JSON.parse(String(init?.body)),{identifier:{type:'auto',value:'mail@shaped.name'},password:'private password'});return json({user},200,{'set-cookie':`momo_session=${session}; HttpOnly; Secure; Path=/`});}
     assert.equal(new Headers(init?.headers).get('authorization'),`Bearer ${session}`);
     return path.endsWith('momoai-key')?json({data:{key}}):json({success:true});
   });
-  await f.core.init();await f.core.connect({type:'username',value:'mail@shaped.name'},'private password');
+  await f.core.init();await f.core.connect({type:'auto',value:'mail@shaped.name'},'private password');
   assert.deepEqual(paths,['/api/auth/login','/api/user/momoai-key','/api/auth/logout']);
   assert.equal(f.credential.key,key);assert.equal(f.credential.userId,user.userId);
   assert.doesNotMatch(JSON.stringify([f.credential,f.saves]),/private password|sid_/);

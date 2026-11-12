@@ -20,8 +20,8 @@ export async function jsonRequest(fetcher:typeof fetch,path:string,body?:any,tok
 }
 
 /** A password is used once. The revocable session is closed after obtaining the existing default key. */
-export async function passwordAccount(fetcher:typeof fetch,identifier:{type:'username'|'email';value:string},password:string){
-  if(!identifier||!['username','email'].includes(identifier.type)||!identifier.value||!password)throw Error('请选择登录方式并填写账号、密码');
+export async function passwordAccount(fetcher:typeof fetch,identifier:{type:'auto'|'username'|'email';value:string},password:string){
+  if(!identifier||!['auto','username','email'].includes(identifier.type)||!identifier.value||!password)throw Error('请填写邮箱或用户名和密码');
   const {response,data}=await jsonRequest(fetcher,'/api/auth/login',{identifier,password});
   const cookies=response.headers.getSetCookie();
   const session=cookies.map(v=>/^momo_session=(sid_[A-Za-z0-9_-]{43})(?:;|$)/.exec(v)?.[1]).find(Boolean);

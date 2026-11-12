@@ -66,7 +66,7 @@ export class MomoCore {
       }
     })().finally(()=>{this.identityFlight=null;});return this.identityFlight;
   }
-  async connect(identifier:{type:'username'|'email';value:string},password:string){
+  async connect(identifier:{type:'auto'|'username'|'email';value:string},password:string){
     if(this.identityFlight)await this.identityFlight.catch(()=>{});
     const account=await passwordAccount(this.fetcher,identifier,password);
     await this.saveConnected(account);

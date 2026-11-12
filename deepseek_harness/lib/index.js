@@ -133,7 +133,7 @@ async function jsonRequest(fetcher, path, body, token) {
   return { response, data: await readJson(response) };
 }
 async function passwordAccount(fetcher, identifier, password) {
-  if (!identifier || !["username", "email"].includes(identifier.type) || !identifier.value || !password) throw Error("\u8BF7\u9009\u62E9\u767B\u5F55\u65B9\u5F0F\u5E76\u586B\u5199\u8D26\u53F7\u3001\u5BC6\u7801");
+  if (!identifier || !["auto", "username", "email"].includes(identifier.type) || !identifier.value || !password) throw Error("\u8BF7\u586B\u5199\u90AE\u7BB1\u6216\u7528\u6237\u540D\u548C\u5BC6\u7801");
   const { response, data } = await jsonRequest(fetcher, "/api/auth/login", { identifier, password });
   const cookies = response.headers.getSetCookie();
   const session = cookies.map((v) => /^momo_session=(sid_[A-Za-z0-9_-]{43})(?:;|$)/.exec(v)?.[1]).find(Boolean);
